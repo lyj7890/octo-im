@@ -31,12 +31,15 @@ func TestShouldProposeClusterAddr(t *testing.T) {
 	assert.True(t, shouldProposeClusterAddr(addr, &types.Node{ClusterAddr: "   "}))
 
 	// 存储值非空(来自 InitNodes[self] 的播种)+ ServerAddr 是不同文本：不覆盖。
-	// 这是 mochashanyao / yujiawei 指出的 P1 场景：initNodes 里写内网 IP、
-	// cluster.serverAddr 写 0.0.0.0 监听所有网卡；不能把 127.0.0.1:11110 覆盖成
-	// 0.0.0.0:11110,否则 peer 会拨到本机上,发生"peer 反向连自己"。
+	// initNodes 里写内网 IP、cluster.serverAddr 写 0.0.0.0 监听所有网卡的场景下,
+	// 不能把 127.0.0.1:11110 覆盖成 0.0.0.0:11110,否则 peer 会拨到本机上,
+	// 发生"peer 反向连自己"。
+	// (bind-all 本身在 options 摄入点已被拒绝,这里再兜底一层,防止 raw storage
+	// 里因为历史遗留值走到覆盖路径。)
 	assert.False(t, shouldProposeClusterAddr("0.0.0.0:11110", &types.Node{ClusterAddr: "127.0.0.1:11110"}))
 
 	// 存储值非空 + operator 改了 serverAddr(旧地址→新地址):保持不覆盖。
-	// 变更地址走独立的 rebalance 路径,不是这里的职责。
+	// 目前代码里没有专门的地址变更路径 —— 已知 P2,由后续 PR 引入
+	// 显式的运维触发通道,而不是让这里的差异性触发去猜。
 	assert.False(t, shouldProposeClusterAddr(addr, &types.Node{ClusterAddr: "old.addr:1"}))
 }
