@@ -35,12 +35,21 @@ func TestClusterAddrChange_RoundTripEmpty(t *testing.T) {
 func TestUpdateClusterAddr(t *testing.T) {
 	c := &Config{
 		cfg: &types.Config{
-			Nodes: []*types.Node{{Id: 1001, ClusterAddr: ""}},
+			Nodes: []*types.Node{
+				{Id: 1001, ClusterAddr: ""},
+				{Id: 2002, ClusterAddr: "node2.wk.local:11110"},
+			},
 		},
 		Log: wklog.NewWKLog("test"),
 	}
+
+	// 只回填匹配的节点，其它节点保持不变
 	c.updateClusterAddr(1001, "node1.wk.local:11110")
 	assert.Equal(t, "node1.wk.local:11110", c.cfg.Nodes[0].ClusterAddr)
-	// 不存在的节点不应 panic
+	assert.Equal(t, "node2.wk.local:11110", c.cfg.Nodes[1].ClusterAddr, "非匹配节点不应被改动")
+
+	// 不存在的节点：不 panic，且不影响任何现有节点
 	c.updateClusterAddr(9999, "x")
+	assert.Equal(t, "node1.wk.local:11110", c.cfg.Nodes[0].ClusterAddr)
+	assert.Equal(t, "node2.wk.local:11110", c.cfg.Nodes[1].ClusterAddr)
 }
