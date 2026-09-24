@@ -11,11 +11,12 @@ func (h *handler) handleCompare() {
 	if h.cfgServer.LeaderId() == 0 {
 		return
 	}
+	// 同一 tick 里两条 reconcile 都要读 Node 记录,hoist 一次省掉一次 RLock。
+	localNode := h.cfgServer.Node(h.cfgOptions.NodeId)
 	// 如果配置里自己节点的apiServerAddr配置不存在或不同，则提案配置。
 	// 提案失败只记日志：apiServerAddr 与下面的 clusterAddr 是两条独立 reconcile，
 	// 不能因为前者失败就阻断后者（下一 tick 会重试）。
 	if strings.TrimSpace(h.cfgOptions.ApiServerAddr) != "" {
-		localNode := h.cfgServer.Node(h.cfgOptions.NodeId)
 		if localNode != nil && localNode.ApiServerAddr != h.cfgOptions.ApiServerAddr {
 			if err := h.cfgServer.ProposeApiServerAddr(h.cfgOptions.NodeId, h.cfgOptions.ApiServerAddr); err != nil {
 				h.Error("ProposeApiServerAddr failed", zap.Error(err))
@@ -26,7 +27,9 @@ func (h *handler) handleCompare() {
 	// standalone 首启时 ServerAddr 为空，记录会带着空 cluster_addr 出生；
 	// 之后补配 serverAddr 时必须回填，否则 join 响应会把空地址发给新节点。
 	// propose 的值先 TrimSpace，避免带前后空白的地址被下发到 addOrUpdateNodes。
-	if shouldProposeClusterAddr(h.cfgOptions.ServerAddr, h.cfgServer.Node(h.cfgOptions.NodeId)) {
+	// ServerAddr 本身的合法性(bind-all / portless)已在摄入点校验过,详见
+	// internal/options/options.go 与 pkg/cluster/node/types/addr.go。
+	if shouldProposeClusterAddr(h.cfgOptions.ServerAddr, localNode) {
 		clusterAddr := strings.TrimSpace(h.cfgOptions.ServerAddr)
 		if err := h.cfgServer.ProposeClusterAddr(h.cfgOptions.NodeId, clusterAddr); err != nil {
 			h.Error("ProposeClusterAddr failed", zap.Error(err))
