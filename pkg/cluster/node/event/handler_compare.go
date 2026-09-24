@@ -11,25 +11,25 @@ func (h *handler) handleCompare() {
 	if h.cfgServer.LeaderId() == 0 {
 		return
 	}
-	// 如果配置里自己节点的apiServerAddr配置不存在或不同，则提案配置
+	// 如果配置里自己节点的apiServerAddr配置不存在或不同，则提案配置。
+	// 提案失败只记日志：apiServerAddr 与下面的 clusterAddr 是两条独立 reconcile，
+	// 不能因为前者失败就阻断后者（下一 tick 会重试）。
 	if strings.TrimSpace(h.cfgOptions.ApiServerAddr) != "" {
 		localNode := h.cfgServer.Node(h.cfgOptions.NodeId)
 		if localNode != nil && localNode.ApiServerAddr != h.cfgOptions.ApiServerAddr {
-			err := h.cfgServer.ProposeApiServerAddr(h.cfgOptions.NodeId, h.cfgOptions.ApiServerAddr)
-			if err != nil {
+			if err := h.cfgServer.ProposeApiServerAddr(h.cfgOptions.NodeId, h.cfgOptions.ApiServerAddr); err != nil {
 				h.Error("ProposeApiServerAddr failed", zap.Error(err))
-				return
 			}
 		}
 	}
-	// 如果配置里自己节点的clusterAddr配置不存在或不同，则提案配置。
+	// 如果配置里自己节点的clusterAddr为空，则提案回填。
 	// standalone 首启时 ServerAddr 为空，记录会带着空 cluster_addr 出生；
-	// 之后补配 serverAddr 时必须回填，否则 join 响应会把空地址发给新节点
+	// 之后补配 serverAddr 时必须回填，否则 join 响应会把空地址发给新节点。
+	// propose 的值先 TrimSpace，避免带前后空白的地址被下发到 addOrUpdateNodes。
 	if shouldProposeClusterAddr(h.cfgOptions.ServerAddr, h.cfgServer.Node(h.cfgOptions.NodeId)) {
-		err := h.cfgServer.ProposeClusterAddr(h.cfgOptions.NodeId, h.cfgOptions.ServerAddr)
-		if err != nil {
+		clusterAddr := strings.TrimSpace(h.cfgOptions.ServerAddr)
+		if err := h.cfgServer.ProposeClusterAddr(h.cfgOptions.NodeId, clusterAddr); err != nil {
 			h.Error("ProposeClusterAddr failed", zap.Error(err))
-			return
 		}
 	}
 }
