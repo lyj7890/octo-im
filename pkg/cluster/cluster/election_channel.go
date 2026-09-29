@@ -80,6 +80,17 @@ func (s *Server) getOrCreateChannelClusterConfigFromLocal(channelId string, chan
 
 // 视情况是否需要加入新的副本
 func (s *Server) joinNewRepliceIfNeed(cfg *wkdb.ChannelClusterConfig) (bool, error) {
+	// 清理历史失败扩容遗留的孤儿迁移标记：learners 为空、migrate_from==migrate_to!=0
+	// 且迁移目标不在副本列表中，说明这是一次从未兑现的加副本标记（脏数据），
+	// 直接清零回到干净静默态。必须放在下面的 rmax 守卫之前，
+	// 否则单副本频道（rmax=1、replicas=[leader]）会在首行 return，标记永远清不掉。
+	if len(cfg.Learners) == 0 && cfg.MigrateFrom != 0 &&
+		cfg.MigrateFrom == cfg.MigrateTo &&
+		!wkutil.ArrayContainsUint64(cfg.Replicas, cfg.MigrateTo) {
+		cfg.MigrateFrom = 0
+		cfg.MigrateTo = 0
+		return true, nil
+	}
 	if len(cfg.Replicas) >= int(cfg.ReplicaMaxCount) {
 		return false, nil
 	}
