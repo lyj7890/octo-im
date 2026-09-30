@@ -1,7 +1,10 @@
 package raft
 
 import (
+	"strings"
+
 	"github.com/WuKongIM/WuKongIM/pkg/raft/types"
+	"go.uber.org/zap"
 )
 
 func (n *Node) sendNotifySync(to uint64) {
@@ -203,6 +206,21 @@ func (n *Node) sendLearnerToLeaderReq(from uint64) {
 }
 
 func (n *Node) sendLearnerToFollowerReq(from uint64) {
+	if strings.Contains(n.Key(), "&") { // [dbg] 仅频道组：记录每次 learner->follower 晋升发起
+		syncInfo := n.replicaSync[from]
+		var rs bool
+		if syncInfo != nil {
+			rs = syncInfo.roleSwitching
+		}
+		n.Info("[dbg]send LearnerToFollowerReq",
+			zap.Uint64("from", from),
+			zap.Uint64("lastLogIndex", n.queue.lastLogIndex),
+			zap.Uint64s("replicas", n.cfg.Replicas),
+			zap.Uint64s("learners", n.cfg.Learners),
+			zap.Uint64("migrateFrom", n.cfg.MigrateFrom),
+			zap.Uint64("migrateTo", n.cfg.MigrateTo),
+			zap.Bool("roleSwitching", rs))
+	}
 	n.events = append(n.events, types.Event{
 		Type: types.LearnerToFollowerReq,
 		From: from,

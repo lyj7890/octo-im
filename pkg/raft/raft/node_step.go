@@ -1,6 +1,8 @@
 package raft
 
 import (
+	"strings"
+
 	"github.com/WuKongIM/WuKongIM/pkg/raft/track"
 	"github.com/WuKongIM/WuKongIM/pkg/raft/types"
 	"go.uber.org/zap"
@@ -132,6 +134,18 @@ func (n *Node) stepLeader(e types.Event) error {
 				// 超过空同步阈值，挂起
 				if syncInfo.emptySyncTick > n.opts.SuspendAfterEmptySyncTick {
 					speed = types.SpeedSuspend
+					// [dbg] 仅频道组、仅在刚跨过挂起阈值时打一次：learner 在没追上/没晋升的情况下被挂起
+					if isLearner && syncInfo.emptySyncTick == n.opts.SuspendAfterEmptySyncTick+1 && strings.Contains(n.Key(), "&") {
+						n.Info("[dbg]learner suspended without promote",
+							zap.Uint64("from", e.From),
+							zap.Uint64("syncIndex", e.Index),
+							zap.Uint64("lastLogIndex", n.queue.lastLogIndex),
+							zap.Bool("roleSwitching", syncInfo.roleSwitching),
+							zap.Uint64s("replicas", n.cfg.Replicas),
+							zap.Uint64s("learners", n.cfg.Learners),
+							zap.Uint64("migrateFrom", n.cfg.MigrateFrom),
+							zap.Uint64("migrateTo", n.cfg.MigrateTo))
+					}
 				}
 			}
 			n.sendSyncResp(e.From, e.Index, nil, types.ReasonOk, speed)
@@ -184,6 +198,20 @@ func (n *Node) stepLeader(e types.Event) error {
 		types.FollowerToLeaderResp:
 
 		n.stopPropose = false
+		// 迁移完成后主动唤醒剩余 learner：迁移进行中，非 migrateTo 的 learner
+		// 无法晋升，若此时被空同步挂起（suspend），迁移完成后它成为 orphan
+		// learner，但挂起状态下不再发 SyncReq，orphan 晋升（依赖 SyncReq 触发）
+		// 永远不会发生，冷频道上会永久卡在 mid_learner。NotifySync 是 learner
+		// 侧唯一解除挂起的途径，这里必须显式补发。
+		// 注意：resp 处理到这里时 ConfChange 通常已先落地（SwitchConfig 走
+		// AddEventWait），replicaSync 已被清空，下方 syncInfo 为 nil 会提前
+		// return，因此唤醒必须放在 nil 检查之前。
+		for _, learnerId := range n.cfg.Learners {
+			if learnerId == n.opts.NodeId {
+				continue
+			}
+			n.sendNotifySync(learnerId)
+		}
 		syncInfo := n.replicaSync[e.From]
 		if syncInfo == nil {
 			if n.queue.lastLogIndex > 0 {
@@ -192,6 +220,14 @@ func (n *Node) stepLeader(e types.Event) error {
 			return nil
 		}
 		n.replicaSync[e.From].roleSwitching = false
+		if strings.Contains(n.Key(), "&") { // [dbg] 仅频道组：角色切换 resp 落地（成功/失败都会走到，latch 在此重置）
+			n.Info("[dbg]role switch resp",
+				zap.String("type", e.Type.String()),
+				zap.Uint64("from", e.From),
+				zap.String("reason", e.Reason.String()),
+				zap.Uint64s("replicas", n.cfg.Replicas),
+				zap.Uint64s("learners", n.cfg.Learners))
+		}
 
 	case types.ConfigReq: // 配置请求
 		n.sendConfigResp(e.From, n.cfg.Clone())

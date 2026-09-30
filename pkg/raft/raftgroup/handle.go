@@ -3,6 +3,7 @@ package raftgroup
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/WuKongIM/WuKongIM/pkg/raft/types"
 	"github.com/WuKongIM/WuKongIM/pkg/wkutil"
@@ -302,6 +303,8 @@ func (rg *RaftGroup) handleRoleChangeReq(r IRaft, e types.Event) {
 		if err != nil {
 			if err != types.ErrNotLeader {
 				rg.Error("change role failed", zap.Error(err), zap.String("key", r.Key()), zap.String("cfg", newCfg.String()))
+			} else if strings.Contains(r.Key(), "&") { // [dbg] 频道组：SaveConfig 因非 leader 被静默拒绝
+				rg.Info("[dbg]role change SaveConfig rejected: not leader", zap.String("key", r.Key()), zap.String("type", e.Type.String()), zap.Uint64("from", e.From))
 			}
 			rg.AddEvent(r.Key(), types.Event{
 				Type:   respEventType,
@@ -309,6 +312,9 @@ func (rg *RaftGroup) handleRoleChangeReq(r IRaft, e types.Event) {
 				Reason: types.ReasonError,
 			})
 			return
+		}
+		if strings.Contains(r.Key(), "&") { // [dbg] 频道组：角色切换 config 持久化成功
+			rg.Info("[dbg]role change SaveConfig ok", zap.String("key", r.Key()), zap.String("type", e.Type.String()), zap.Uint64("from", e.From), zap.String("newCfg", newCfg.String()))
 		}
 		rg.AddEvent(r.Key(), types.Event{
 			Type:   respEventType,
