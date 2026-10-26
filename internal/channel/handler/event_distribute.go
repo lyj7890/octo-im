@@ -47,6 +47,20 @@ func (h *Handler) distribute(ctx *eventbus.ChannelContext) {
 
 // 普通消息分发
 func (h *Handler) distributeCommon(ctx *eventbus.ChannelContext) {
+	// Preserve order, including A/B/A batches, without changing the caller's context.
+	for start := 0; start < len(ctx.Events); {
+		end := start + 1
+		for end < len(ctx.Events) && ctx.Events[end].TagKey == ctx.Events[start].TagKey {
+			end++
+		}
+		batch := *ctx
+		batch.Events = ctx.Events[start:end]
+		h.distributeCommonVersion(&batch)
+		start = end
+	}
+}
+
+func (h *Handler) distributeCommonVersion(ctx *eventbus.ChannelContext) {
 	// 获取或创建tag
 	tag, err := h.getCommonTag(ctx)
 	if err != nil {
@@ -258,15 +272,17 @@ func (h *Handler) getCommonTag(ctx *eventbus.ChannelContext) (*types.Tag, error)
 
 	// 如果当前节点是频道的领导者节点，则可以make tag
 	if options.G.IsLocalNode(ctx.SlotLeaderId) {
+		if key := ctx.Events[0].TagKey; key != "" {
+			tag := service.TagManager.Get(key)
+			if tag == nil {
+				return nil, errors.New("stamped tag version unavailable: " + key)
+			}
+			return tag, nil
+		}
 		return h.getOrMakeTagForLeader(ctx.ChannelId, ctx.ChannelType)
 	}
 	tagKey := ctx.Events[0].TagKey
 
-	// 判断当前的频道tag是否等于tagKey,如果不等于则删除旧的tag
-	oldTagKey := service.TagManager.GetChannelTag(ctx.ChannelId, ctx.ChannelType)
-	if oldTagKey != "" && oldTagKey != tagKey {
-		service.TagManager.RemoveTag(oldTagKey)
-	}
 	tag, err := h.commonService.GetOrRequestAndMakeTagWithLocal(ctx.ChannelId, ctx.ChannelType, tagKey)
 	if err != nil {
 		h.Error("processDiffuse: get tag failed", zap.Error(err), zap.String("fakeChannelId", ctx.ChannelId), zap.Uint8("channelType", ctx.ChannelType), zap.String("tagKey", tagKey))

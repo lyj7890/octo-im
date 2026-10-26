@@ -14,7 +14,8 @@ import (
 
 type tagBlucket struct {
 	tag struct {
-		m map[string]*types.Tag
+		m       map[string]*types.Tag
+		retired map[string]time.Time
 		sync.RWMutex
 	}
 	index   int
@@ -40,6 +41,7 @@ func newTagBlucket(index int, expire time.Duration, existTagFnc func(tagKey stri
 	}
 	b.channel.m = make(map[string]string)
 	b.tag.m = make(map[string]*types.Tag)
+	b.tag.retired = make(map[string]time.Time)
 	return b
 }
 
@@ -76,7 +78,8 @@ func (b *tagBlucket) checkExpireTags() {
 	// tag过期检查
 	var removeTags []string // 需要移除的tagKey
 	for _, tag := range b.tag.m {
-		if time.Since(tag.LastGet()) > b.expire {
+		retired, isRetired := b.tag.retired[tag.Key]
+		if (isRetired && time.Since(retired) > b.expire) || (!isRetired && time.Since(tag.LastGet()) > b.expire) {
 			if removeTags == nil {
 				removeTags = make([]string, 0, 20)
 			}
@@ -86,6 +89,7 @@ func (b *tagBlucket) checkExpireTags() {
 
 	for _, removeTagKey := range removeTags {
 		delete(b.tag.m, removeTagKey)
+		delete(b.tag.retired, removeTagKey)
 	}
 	b.tag.Unlock()
 	// 日志放在锁外：持有分桶锁时，等待它的tag写入方也占着TagManager的锁
@@ -130,6 +134,7 @@ func (b *tagBlucket) removeTag(tagKey string) {
 	b.tag.Lock()
 	defer b.tag.Unlock()
 	delete(b.tag.m, tagKey)
+	delete(b.tag.retired, tagKey)
 }
 
 func (b *tagBlucket) existTag(tagKey string) bool {
@@ -175,4 +180,15 @@ func (b *tagBlucket) getAllChannelTags() map[string]string {
 		channelTags[k] = v
 	}
 	return channelTags
+}
+
+// retireTag starts a fixed grace period; hot new versions cannot extend it.
+func (b *tagBlucket) retireTag(key string) {
+	b.tag.Lock()
+	defer b.tag.Unlock()
+	if _, exists := b.tag.m[key]; exists {
+		if _, retired := b.tag.retired[key]; !retired {
+			b.tag.retired[key] = time.Now()
+		}
+	}
 }

@@ -330,6 +330,55 @@ func (t *TagManager) RenameTag(oldTagKey, newTagKey string) error {
 	return nil
 }
 
+// UpdateChannelTagUsers publishes a new membership version and mapping together.
+// An old version keeps its original membership for delayed remote messages.
+// Retirement is bounded by Tag.Expire, independent of accesses to newer versions.
+func (t *TagManager) UpdateChannelTagUsers(channelId string, channelType uint8, uids []string, remove bool) error {
+	t.Lock()
+	defer t.Unlock()
+	oldKey := t.GetChannelTag(channelId, channelType)
+	old := t.getTag(oldKey)
+	if old == nil {
+		return nil
+	} // Lazy creation will read persisted subscribers.
+	members := old.GetUsers()
+	changes := make(map[string]bool, len(uids))
+	for _, uid := range uids {
+		changes[uid] = true
+	}
+	next := make([]string, 0, len(members)+len(uids))
+	seen := make(map[string]bool, len(members)+len(uids))
+	for _, uid := range members {
+		if remove && changes[uid] {
+			continue
+		}
+		if !seen[uid] {
+			next = append(next, uid)
+			seen[uid] = true
+		}
+	}
+	if !remove {
+		for _, uid := range uids {
+			if !seen[uid] {
+				next = append(next, uid)
+				seen[uid] = true
+			}
+		}
+	}
+	if slices.Equal(members, next) {
+		return nil
+	}
+	tag, err := t.MakeTagNotCacheWithTagKey(wkutil.GenUUID(), next)
+	if err != nil {
+		return err
+	}
+	tag.ChannelId, tag.ChannelType = channelId, channelType
+	t.setTag(tag)
+	t.getBlucketByChannel(channelId, channelType).setChannelTag(channelId, channelType, tag.Key)
+	t.getBlucketByTagKey(oldKey).retireTag(oldKey)
+	return nil
+}
+
 func (t *TagManager) SetChannelTag(fakeChannelId string, channelType uint8, tagKey string) {
 	t.Lock()
 	defer t.Unlock()

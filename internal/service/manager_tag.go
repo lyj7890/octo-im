@@ -5,6 +5,7 @@ import "github.com/WuKongIM/WuKongIM/internal/types"
 var TagManager ITagManager
 
 type ITagManager interface {
+	UpdateChannelTagUsers(channelId string, channelType uint8, uids []string, remove bool) error
 	// AddUsers 向指定tag里增加用户
 	AddUsers(tagKey string, uids []string) error
 	RemoveUsers(tagKey string, uids []string) error
